@@ -1,12 +1,12 @@
+Package: apkfind
 Version: 1.1.0
 Architecture: all
-Maintainer: Termux User
+Maintainer: Deuterium-P
 Depends: curl, jq
-Section: utils
-Priority: optional
-Description: Cross-platform app version compatibility finder for Android, HyperOS, and iOS.
-Filename: ./apkfind-1.1.0.deb
+Filename: apkfind-1.1.0.deb
 Size: 2508
 MD5sum: df9bd830d1eba65d082a06474ded1f53
 SHA256: 55ae2bd0a8ed5f568b4b142135b9013abf2c2b1cb9146f5d7f7c2a90b96d8662
-
+Section: utils
+Priority: optional
+Description: Cross-platform app version compatibility finder for Android, HyperOS, and iOS.
