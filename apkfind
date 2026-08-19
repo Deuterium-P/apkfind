@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+
+APP_NAME="$1"
+OS_INPUT="$2"
+
+if [ -z "$APP_NAME" ] || [ -z "$OS_INPUT" ]; then
+  echo "Usage: apkfind <app_name> <os_version>"
+  echo "Examples:"
+  echo "  apkfind spotify 12"
+  echo "  apkfind telegram hyperos 1"
+  echo "  apkfind protonvpn ios 15.8.8"
+  exit 1
+fi
+
+CLEAN_OS=$(echo "$OS_INPUT" | tr '[:upper:]' '[:lower:]')
+
+# Helper function to convert version strings (e.g., "15.8.8") to integer for comparison
+version_to_int() {
+  echo "$1" | awk -F. '{ printf("%d%02d%02d\n", $1, $2, $3); }'
+}
+
+# ==============================================================================
+# --- iOS SEARCH LOGIC ---
+# ==============================================================================
+if [[ "$CLEAN_OS" == *"ios"* ]]; then
+  # Extract numeric version string (e.g. "ios 15.8.8" -> "15.8.8")
+  IOS_VER=$(echo "$CLEAN_OS" | sed -E 's/[^0-9.]//g')
+  [ -z "$IOS_VER" ] && IOS_VER="15.0"
+
+  echo "[+] Target Platform: Apple iOS (Requested Version: $IOS_VER)"
+  echo "[+] Searching..."
+
+  ENCODED_APP="${APP_NAME// /%20}"
+  RESPONSE=$(curl -s "https://itunes.apple.com/search?term=${ENCODED_APP}&entity=software&limit=1")
+
+  TOTAL=$(echo "$RESPONSE" | jq -r '.resultCount // 0')
+
+  if [ "$TOTAL" -eq 0 ]; then
+    echo "[-] Could not find any iOS app matching '$APP_NAME'."
+    exit 1
+  fi
+
+  # Extract metadata from JSON response
+  MATCH=$(echo "$RESPONSE" | jq -r '
+    .results[0] | 
+    "\(.trackName)|\(.bundleId)|\(.version)|\(.minimumOsVersion)|\(.trackId)"
+  ')
+
+  IFS="|" read -r APP_TITLE BUNDLE_ID LATEST_VER MIN_IOS TRACK_ID <<< "$MATCH"
+
+  REQ_INT=$(version_to_int "$MIN_IOS")
+  USER_INT=$(version_to_int "$IOS_VER")
+
+  echo "--------------------------------------------------"
+  echo "App Name:       $APP_TITLE"
+  echo "Bundle ID:      $BUNDLE_ID"
+  echo "Latest Version: $LATEST_VER (Requires iOS $MIN_IOS+)"
+  echo "--------------------------------------------------"
+
+  if [ "$USER_INT" -ge "$REQ_INT" ]; then
+    echo "[+] SUCCESS: Current version ($LATEST_VER) is fully compatible with iOS $IOS_VER!"
+    echo "App Store URL: https://apps.apple.com/app/id${TRACK_ID}"
+  else
+    echo "[!] INCOMPATIBLE: Current app requires iOS $MIN_IOS, but you requested iOS $IOS_VER."
+    echo "[+] Fetching Decrypted IPA & Legacy Archive Sources:"
+    echo "--------------------------------------------------"
+    echo "1. Decrypted App Store (ARMConverter):"
+    echo "   https://armconverter.com/decryptedappstore?q=${BUNDLE_ID}"
+    echo ""
+    echo "2. Decrypt.day Archive:"
+    echo "   https://decrypt.day/app/id${TRACK_ID}"
+    echo ""
+    echo "3. Software Build ID Lookup (AppStore++ DB):"
+    echo "   https://tools.lancew.com/appstore/?id=${TRACK_ID}"
+    echo "--------------------------------------------------"
+    echo "Note: iOS .ipa files cannot be decrypted inside Termux due to"
+    echo "Apple FairPlay DRM. Use the links above for pre-decrypted IPAs."
+  fi
+  exit 0
+fi
+
+# ==============================================================================
+# --- ANDROID / HYPEROS SEARCH LOGIC ---
+# ==============================================================================
+target_api() {
+  case "$1" in
+    *hyperos*2*|*15*) echo 35 ;;
+    *hyperos*1*|*14*) echo 34 ;;
+    *13*) echo 33 ;;
+    *12*) echo 31 ;;
+    *11*) echo 30 ;;
+    *10*) echo 29 ;;
+    *9*)  echo 28 ;;
+    *8*)  echo 26 ;;
+    *) echo 33 ;;
+  esac
+}
+
+USER_API=$(target_api "$CLEAN_OS")
+
+echo "[+] Target Android API Level: $USER_API"
+echo "[+] Searching..."
+
+ENCODED_APP="${APP_NAME// /%20}"
+RESPONSE=$(curl -s "https://ws75.aptoide.com/api/7/apps/search?query=${ENCODED_APP}&limit=10")
+
+TOTAL=$(echo "$RESPONSE" | jq -r '.datalist.total // 0')
+
+if [ "$TOTAL" -eq 0 ]; then
+  echo "[-] Could not find any app matching '$APP_NAME'."
+  exit 1
+fi
+
+MATCH=$(echo "$RESPONSE" | jq -r --argjson user_api "$USER_API" '
+  .datalist.list[] | 
+  select((.sdk // 0) <= $user_api) | 
+  "\(.name)|\(.package)|\(.uname)|\(.sdk)|\(.file.path)"
+' | head -n 1)
+
+if [ -z "$MATCH" ]; then
+  echo "[-] Found apps, but none are compatible with API Level $USER_API."
+  exit 1
+fi
+
+IFS="|" read -r APP_TITLE PKG_NAME VER_NAME MIN_SDK DL_URL <<< "$MATCH"
+
+echo "--------------------------------------------------"
+echo "SUCCESS: Latest Compatible Version Found!"
+echo "--------------------------------------------------"
+echo "App Name:      $APP_TITLE"
+echo "Package Name:  $PKG_NAME"
+echo "Version:       $VER_NAME"
+echo "Min API Req:   $MIN_SDK"
+echo "Download Link: $DL_URL"
+echo "--------------------------------------------------"
